@@ -1,0 +1,56 @@
+name: TDS GA7 Release Gate
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  release-gate-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 'TDS identity: 23f2002573@ds.study.iitm.ac.in'
+        run: echo "TDS identity: 23f2002573@ds.study.iitm.ac.in"
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run release-gate policy tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Boot server and smoke-test /release-gate
+        run: |
+          python app.py &
+          SERVER_PID=$!
+          sleep 3
+
+          RESPONSE=$(curl -s -X POST http://localhost:3000/release-gate \
+            -H 'Content-Type: application/json' \
+            -d '{
+              "target": "preview",
+              "event": "pull_request",
+              "ref": "refs/heads/feature",
+              "workflow": {
+                "trigger": "pull_request",
+                "permissions": {"contents":"read","packages":"write","id-token":"none"},
+                "testsPassed": true, "matrixComplete": true, "failFast": false,
+                "actions": [{"owner":"actions","name":"checkout","ref":"v4"}]
+              },
+              "image": {"multiStage": true, "runsAsRoot": false, "secretMode":"none","criticalVulnerabilities":0,"digestPinned":true}
+            }')
+
+          echo "Response: $RESPONSE"
+          echo "$RESPONSE" | grep -q '"decision":"promote"' || (echo "Smoke test failed" && exit 1)
+
+          kill $SERVER_PID
